@@ -1,15 +1,14 @@
 import express from 'express';
-import { getAptitudeResult, getAptitudeQuestions } from '../controllers/aptitudeController.js';
+import { getAptitudeQuestions, submitAptitude } from '../controllers/aptitudeController.js';
+import { requireAuth } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// POST /api/aptitude/result
-// Accepts student level and answers, returns department or course recommendation
-router.post('/result', getAptitudeResult);
-
-// GET /api/aptitude/questions?level=SSS
-// Returns all questions and options for a given level
+// GET /api/aptitude/questions?level=JSS
 router.get('/questions', getAptitudeQuestions);
 
+// POST /api/aptitude/submit
+// Protected: must be logged in, checks and sets assessment_locked
+router.post('/submit', requireAuth, submitAptitude);
 
 export default router;

@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import aptitudeRoutes from './routes/aptitudeRoutes.js';
 import courseRoutes from './routes/courseRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
+import authRoutes from './routes/authRoutes.js';
 
 const app = express();
 
@@ -16,6 +17,9 @@ app.get('/', (req, res) => {
         message: 'Verta API is live'
     });
 });
+
+// auth routes
+app.use('/api/auth', authRoutes);
 
 // Aptitude quiz routes
 app.use('/api/aptitude', aptitudeRoutes);
