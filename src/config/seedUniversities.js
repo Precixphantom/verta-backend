@@ -22,7 +22,7 @@ const seedUniversities = async () => {
         ('Babcock University (BU)',                   'Ogun',   'Accredited', 'Private'),
         ('Landmark University (LU)',                  'Kwara',  'Accredited', 'Private'),
         ('Pan-Atlantic University (PAU)',             'Lagos',  'Accredited', 'Private'),
-        ('Bowen University (BU)',                     'Osun',   'Accredited', 'Private')
+        ('Bowen University (BUI)',                    'Osun',   'Accredited', 'Private')
       RETURNING id, name;
     `);
 
@@ -159,7 +159,7 @@ const seedUniversities = async () => {
       u['Babcock University (BU)'],
       u['Landmark University (LU)'],
       u['Pan-Atlantic University (PAU)'],
-      u['Bowen University (BU)']
+      u['Bowen University (BUI)']
     ]);
 
     console.log('Course-university links seeded: 255 rows');
