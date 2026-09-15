@@ -195,3 +195,51 @@ export const submitAptitude = async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
+// GET /api/aptitude/result
+// Protected by requireAuth. Lets a student who already completed the
+// assessment retrieve their result again later, since /submit only ever
+// returned it once, at the moment of submission.
+export const getAptitudeResult = async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const userResult = await pool.query(
+      `SELECT assessment_locked, science_score, commercial_score, arts_score, recommended_track
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userResult.rows[0];
+
+    if (!user.assessment_locked) {
+      return res.status(404).json({ error: 'This account has not completed the assessment yet' });
+    }
+
+    // Recompute the same 3 course matches /submit would have shown, using
+    // the same deterministic query, same track, same ordering.
+    const coursesResult = await pool.query(
+      `SELECT id, name, description FROM courses WHERE primary_track = $1 ORDER BY id ASC LIMIT 3`,
+      [user.recommended_track]
+    );
+
+    res.status(200).json({
+      recommended_track: user.recommended_track,
+      scores: {
+        Science: Number(user.science_score),
+        Commercial: Number(user.commercial_score),
+        Arts: Number(user.arts_score),
+      },
+      top_matches: coursesResult.rows,
+      message: `Based on your answers, you are best suited for the ${user.recommended_track} track.`
+    });
+
+  } catch (error) {
+    console.error('getAptitudeResult error:', error.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
