@@ -1,19 +1,28 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import pool from '../config/db.js';
+import { GoogleGenerativeAI } from '@google/generative-ai'; // Gemini client library
+import pool from '../config/db.js'; // shared database connection
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY); // key stays in env so it never ships in code
+
+// Safety net. The prompt asks for plain text, but models sometimes slip.
+// Cleaning on the server means every client gets safe text, whatever the frontend does.
+const cleanReply = text =>
+  text
+    .replace(/\*\*/g, '') // bold markers show up as literal symbols in the bubble
+    .replace(/^\s*[*-]\s+/gm, '\u2022 ') // bullet starts become a real bullet, readable even if lines collapse
+    .replace(/^#+\s*/gm, '') // heading hashes are not rendered by the bubble
+    .replace(/\*/g, '') // any leftover asterisks
+    .replace(/\n{3,}/g, '\n\n') // runaway blank lines look sloppy
+    .trim(); // stray whitespace at the edges looks odd in a bubble
 
 export const chat = async (req, res) => {
   try {
-    const { message } = req.body;
+    const { message } = req.body; // the student's question
 
     if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
+      return res.status(400).json({ error: 'Message is required' }); // nothing to answer
     }
 
-    // Pull all courses and their university details, now including the
-    // Phase 2 fields: duration, localized naming, O-Level requirements,
-    // USD salary, and industry verticals.
+    // Pull all courses and their university details.
     const result = await pool.query(`
       SELECT
         c.name AS course_name,
@@ -36,8 +45,7 @@ export const chat = async (req, res) => {
       ORDER BY c.name ASC, cu.utme_cutoff DESC
     `);
 
-    // Format the database rows into readable text for the system prompt
-    // Group by course so Olu sees: course → its universities → their details
+    // Group rows by course so Olu sees: course, then its universities, then details.
     const courseMap = {};
     result.rows.forEach(row => {
       if (!courseMap[row.course_name]) {
@@ -52,8 +60,7 @@ export const chat = async (req, res) => {
         };
       }
 
-      // Cutoffs aren't sourced yet for any row, say so plainly instead of
-      // printing "null" or letting the model guess a number.
+      // Cutoffs are not sourced yet for any row. Say so plainly instead of printing null.
       const cutoffText = row.utme_cutoff
         ? `UTME: ${row.utme_cutoff}, Post-UTME: ${row.post_utme_cutoff}%`
         : `UTME/Post-UTME cutoff: not yet available`;
@@ -64,7 +71,7 @@ export const chat = async (req, res) => {
         : '';
 
       courseMap[row.course_name].universities.push(
-        `${row.university_name} (${row.state}, ${row.type})${localizedText} — ${durationText}, ${cutoffText}`
+        `${row.university_name} (${row.state}, ${row.type})${localizedText} - ${durationText}, ${cutoffText}`
       );
     });
 
@@ -84,8 +91,9 @@ export const chat = async (req, res) => {
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
-      systemInstruction: `You are Olu, a warm and knowledgeable Nigerian academic counselor for secondary school students.
+      systemInstruction: `You are Olu, a warm and knowledgeable guide for Nigerian secondary school students.
 You understand JAMB, Post-UTME, O-level requirements, WAEC, NECO, and Nigerian university admissions.
+Never call yourself a counsellor. You are a guide, and people make the final decisions.
 
 [CRITICAL RULE]
 You must ONLY use the database below to answer questions about courses, universities, cutoff scores, salaries, and requirements.
@@ -97,19 +105,25 @@ Never guess or make up scores, combinations, salaries, or university names.
 - A student is competitive ONLY if their scores meet or exceed BOTH the utme_cutoff AND post_utme_cutoff for their chosen school.
 - Some entries say cutoff data is "not yet available." If a student asks about their chances at one of these, tell them honestly that cutoff data for that school isn't in the system yet, do not invent a number or estimate one.
 - When a university offers a course under a different local name (shown in parentheses), mention that name specifically if the student is asking about JAMB registration for that school.
-- Always be concise, warm, and direct.
+- Requirements can differ slightly between universities, so remind students to confirm with their chosen school and the current JAMB brochure before registering.
+
+[STYLE]
+- Write in plain text only. Never use asterisks, bullet points, numbered lists, bold, headings or any markdown symbols.
+- Do not write lists. Put items inside a sentence, separated by commas. Example: "For Law you will need English Language, Literature in English and Government."
+- Keep replies to 2 to 4 short sentences unless the student asks for more detail.
+- Be warm, concise and direct.
 
 [DATABASE]
 ${dbText}`
     });
 
-    const geminiResult = await model.generateContent(message);
-    const reply = geminiResult.response.text();
+    const geminiResult = await model.generateContent(message); // single turn, no history yet
+    const reply = cleanReply(geminiResult.response.text()); // clean before sending so the bubble never shows markdown
 
-    res.status(200).json({ reply });
+    res.status(200).json({ reply }); // same response shape, so the frontend needs no change
 
   } catch (error) {
-    console.error('Olu chat error:', error.message);
+    console.error('Olu chat error:', error.message); // log the message only, never student data
     res.status(500).json({ error: 'Internal server error' });
   }
 };
