@@ -1,6 +1,7 @@
 import express from 'express';
 import { getAptitudeQuestions, submitAptitude, getAptitudeResult } from '../controllers/aptitudeController.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
+import { getInterestItems, submitInterest } from '../controllers/interestController.js';
 
 const router = express.Router();
 
@@ -14,5 +15,8 @@ router.post('/submit', requireAuth, submitAptitude);
 // GET /api/aptitude/result
 // Protected: returns a locked student's saved result, retrievable anytime
 router.get('/result', requireAuth, getAptitudeResult);
+
+router.get('/items', requireAuth, getInterestItems);
+router.post('/submit-ratings', requireAuth, submitInterest);
 
 export default router;

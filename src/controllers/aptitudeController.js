@@ -81,7 +81,7 @@ export const submitAptitude = async (req, res) => {
     const userId = req.userId;
     const { level, answers, chosen_track } = req.body;
 
-    // Step 1: the identity lock. This is the whole point of today's task.
+    // Step 1: the identity lock, early exit. The real guard is in Step 6.
     const userResult = await pool.query(
       'SELECT assessment_locked FROM users WHERE id = $1',
       [userId]
@@ -95,24 +95,58 @@ export const submitAptitude = async (req, res) => {
       return res.status(403).json({ error: 'This account has already completed the assessment' });
     }
 
-    // Step 2: validation, same as before
+    // Step 2: validation
     if (!level || !['JSS', 'SSS'].includes(level)) {
       return res.status(400).json({ error: 'Level must be JSS or SSS' });
     }
-    if (!answers || !Array.isArray(answers) || answers.length === 0) {
-      return res.status(400).json({ error: 'Answers must be a non-empty array' });
+    if (!Array.isArray(answers) || answers.length === 0) {
+      return res.status(400).json({ error: 'Answers must be a non empty array' });
     }
 
-    // Step 3: deterministic weighted scoring, same math for JSS and SSS,
-    // no branching by level anymore.
+    const validShape = answers.every(
+      a => a && Number.isInteger(a.question_id) && Number.isInteger(a.option_id)
+    );
+    if (!validShape) {
+      return res.status(400).json({ error: 'Each answer needs a question_id and option_id' });
+    }
+
+    // Roll call: who should have answered, and did each question get answered once?
+    const expectedResult = await pool.query(
+      'SELECT id FROM aptitude_questions WHERE level = $1',
+      [level]
+    );
+    const expectedIds = new Set(expectedResult.rows.map(r => r.id));
+    const submittedIds = new Set(answers.map(a => a.question_id));
+
+    if (submittedIds.size !== answers.length) {
+      return res.status(400).json({ error: 'Each question can only be answered once' });
+    }
+    if (
+      submittedIds.size !== expectedIds.size ||
+      [...submittedIds].some(id => !expectedIds.has(id))
+    ) {
+      return res.status(400).json({ error: 'Answer every question for this level' });
+    }
+
+    // Step 3: check each option belongs to its question, then score.
+    // Deterministic weighted scoring, same math for JSS and SSS.
     const optionIds = answers.map(a => a.option_id);
 
     const weightsResult = await pool.query(
-      `SELECT id, weight_science, weight_arts, weight_commercial
+      `SELECT id, question_id, weight_science, weight_arts, weight_commercial
        FROM question_options
        WHERE id = ANY($1::int[])`,
       [optionIds]
     );
+
+    const optionById = new Map(weightsResult.rows.map(o => [o.id, o]));
+    const mismatch = answers.some(a => {
+      const option = optionById.get(a.option_id);
+      return !option || option.question_id !== a.question_id;
+    });
+    if (mismatch) {
+      return res.status(400).json({ error: 'One or more options do not match their question' });
+    }
 
     let scienceScore = 0;
     let artsScore = 0;
@@ -140,7 +174,7 @@ export const submitAptitude = async (req, res) => {
 
     if (tiedTracks.length > 1) {
       // Genuine tie. If the student hasn't told us which one they want yet,
-      // stop here and ask, do NOT lock the account, nothing has been decided.
+      // stop here and ask. Do NOT lock the account, nothing has been decided.
       if (!chosen_track) {
         return res.status(200).json({
           tie: true,
@@ -169,18 +203,22 @@ export const submitAptitude = async (req, res) => {
       [finalTrack]
     );
 
-    // Step 6: lock the account and save the result. This can only happen once,
-    // enforced by the check at the top of this function.
-    await pool.query(
+    // Step 6: atomic lock. The WHERE clause makes the check and the update
+    // one step, so two simultaneous requests cannot both succeed.
+    const lockResult = await pool.query(
       `UPDATE users
        SET assessment_locked = true,
            science_score = $1,
            commercial_score = $2,
            arts_score = $3,
            recommended_track = $4
-       WHERE id = $5`,
+       WHERE id = $5 AND assessment_locked = false`,
       [scores.Science, scores.Commercial, scores.Arts, finalTrack, userId]
     );
+
+    if (lockResult.rowCount === 0) {
+      return res.status(403).json({ error: 'This account has already completed the assessment' });
+    }
 
     res.status(200).json({
       tie: false,
@@ -205,7 +243,8 @@ export const getAptitudeResult = async (req, res) => {
     const userId = req.userId;
 
     const userResult = await pool.query(
-      `SELECT assessment_locked, science_score, commercial_score, arts_score, recommended_track
+      `SELECT assessment_locked, science_score, commercial_score, arts_score,
+              recommended_track, department
        FROM users WHERE id = $1`,
       [userId]
     );
@@ -220,12 +259,21 @@ export const getAptitudeResult = async (req, res) => {
       return res.status(404).json({ error: 'This account has not completed the assessment yet' });
     }
 
-    // Recompute the same 3 course matches /submit would have shown, using
-    // the same deterministic query, same track, same ordering.
     const coursesResult = await pool.query(
       `SELECT id, name, description FROM courses WHERE primary_track = $1 ORDER BY id ASC LIMIT 3`,
       [user.recommended_track]
     );
+
+    const matchesDepartment = user.department
+      ? user.department === user.recommended_track
+      : null;
+
+    let message = `Your strongest interest area is ${user.recommended_track}.`;
+    if (matchesDepartment === true) {
+      message += ' This lines up with your department. Here are courses to explore.';
+    } else if (matchesDepartment === false) {
+      message += ` Your department is ${user.department}. Many courses connect both areas, so explore the matches below.`;
+    }
 
     res.status(200).json({
       recommended_track: user.recommended_track,
@@ -234,8 +282,10 @@ export const getAptitudeResult = async (req, res) => {
         Commercial: Number(user.commercial_score),
         Arts: Number(user.arts_score),
       },
+      department: user.department,
+      matches_department: matchesDepartment,
       top_matches: coursesResult.rows,
-      message: `Based on your answers, you are best suited for the ${user.recommended_track} track.`
+      message
     });
 
   } catch (error) {
