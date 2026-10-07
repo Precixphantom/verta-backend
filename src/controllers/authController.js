@@ -106,11 +106,12 @@ export const login = async (req, res) => {
 // without needing to log in again or attempt a submit just to read the error.
 export const getMe = async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT id, full_name, email, level, assessment_locked,
+        const result = await pool.query(
+      // department added so the frontend knows which tab an SSS student starts on
+      `SELECT id, full_name, email, level, department, assessment_locked,
               science_score, commercial_score, arts_score, recommended_track
        FROM users WHERE id = $1`,
-      [req.userId]
+      [req.userId] // the id comes from the verified token, never from the request body
     );
 
     if (result.rows.length === 0) {
