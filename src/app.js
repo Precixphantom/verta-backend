@@ -5,6 +5,8 @@ import aptitudeRoutes from './routes/aptitudeRoutes.js';
 import courseRoutes from './routes/courseRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import authRoutes from './routes/authRoutes.js';
+import trackRoutes from './routes/trackRoutes.js'
+import guideRoutes from './routes/guideRoutes.js'
 
 const app = express();
 
@@ -26,6 +28,12 @@ app.use('/api/aptitude', aptitudeRoutes);
 
 // Course and university routes
 app.use('/api/courses', courseRoutes);
+
+// track routes
+app.use('/api/tracks', trackRoutes);
+
+// guide routes
+app.use('/api', guideRoutes);
 
 // Olu chatbot route
 app.use('/api/chat', chatRoutes);
